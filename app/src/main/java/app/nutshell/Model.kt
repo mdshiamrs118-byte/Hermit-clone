@@ -117,6 +117,10 @@ object Store {
         sp.edit().putString("userscripts", JSONArray(list).toString()).apply()
     }
 
+    var gridView: Boolean
+        get() = sp.getBoolean("grid", false)
+        set(v) { sp.edit().putBoolean("grid", v).apply() }
+
     fun seen(id: String): List<String> =
         sp.getString("seen_$id", "")!!.lines().filter { it.isNotEmpty() }
 

@@ -338,6 +338,11 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
 
         override fun onProgressChanged(view: WebView, newProgress: Int) { progress.progress = newProgress }
 
+        override fun onReceivedIcon(view: WebView, icon: Bitmap) {
+            val host = Uri.parse(view.url ?: return).host ?: return
+            if (!incognito && baseDomain(host) == baseDomain(home)) IconStore.savePageIcon(this@BrowserActivity, app.id, icon)
+        }
+
         override fun onPermissionRequest(req: PermissionRequest) {
             runOnUiThread {
                 val needs = ArrayList<String>()

@@ -83,7 +83,10 @@ fun pinShortcut(ctx: Context, app: LiteApp) {
 }
 
 object Net {
-    fun get(url: String, maxBytes: Int = 15_000_000): String {
+    fun get(url: String, maxBytes: Int = 15_000_000): String =
+        String(getBytes(url, maxBytes), Charsets.UTF_8)
+
+    fun getBytes(url: String, maxBytes: Int = 15_000_000): ByteArray {
         val u = URL(url)
         require(u.protocol == "https" || u.protocol == "http") { "Unsupported scheme" }
         val c = u.openConnection() as HttpURLConnection
@@ -104,7 +107,7 @@ object Net {
                     if (total > maxBytes) throw IOException("Response too large")
                     out.write(buf, 0, n)
                 }
-                return out.toString("UTF-8")
+                return out.toByteArray()
             }
         } finally {
             c.disconnect()

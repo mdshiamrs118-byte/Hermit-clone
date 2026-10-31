@@ -12,7 +12,8 @@ from any other app.
 
 | Feature | Where |
 |---|---|
-| Lite apps (name, URL, color, per-app settings) | `Model.kt`, `AppEditor.kt`, `MainActivity.kt` |
+| Home screen: list and grid views with site icons, color dots, search / URL box | `MainActivity.kt`, `IconStore.kt` |
+| Lite apps (name, URL, color, per-app settings) | `Model.kt`, `AppEditor.kt` |
 | Separate Recents entry per lite app | `documentLaunchMode="always"` in the manifest, `BrowserActivity.applyTaskDescription` |
 | Home-screen shortcuts | `Util.kt` `pinShortcut` |
 | Isolated cookies/storage per app (WebView profiles) | `BrowserActivity.attachProfile` |
