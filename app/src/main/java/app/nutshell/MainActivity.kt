@@ -54,8 +54,8 @@ class MainActivity : AppCompatActivity() {
         toolbar.setOnMenuItemClickListener {
             when (it.itemId) {
                 1 -> startActivity(BrowserActivity.launchIntent(this, BrowserActivity.INCOGNITO))
-                2 -> blockListsDialog()
-                3 -> userScriptsDialog()
+                2 -> GlobalSettings.blockLists(this)
+                3 -> GlobalSettings.userScripts(this)
                 4 -> MaterialAlertDialogBuilder(this).setTitle("Nutshell 1.0")
                     .setMessage("An independent, open source lite-apps browser. Not affiliated with or derived from Hermit or Chimbori.")
                     .setPositiveButton(android.R.string.ok, null).show()
@@ -142,70 +142,6 @@ class MainActivity : AppCompatActivity() {
                         .setNegativeButton(android.R.string.cancel, null).show()
                 }
             }.show()
-    }
-
-    // ---- Block lists -------------------------------------------------------------------
-
-    private fun blockListsDialog() {
-        val et = EditText(this).apply {
-            setText(Store.blockListUrls.joinToString("\n"))
-            hint = "One list URL per line (hosts-file format)"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_VARIATION_URI
-            minLines = 3
-            setPadding(dp(20), dp(12), dp(20), dp(12))
-        }
-        fun save() { Store.blockListUrls = et.text.toString().lines().map { it.trim() }.filter { it.startsWith("http") } }
-        MaterialAlertDialogBuilder(this).setTitle("Block lists").setView(et)
-            .setPositiveButton("Save") { _, _ -> save() }
-            .setNeutralButton("Save & update now") { _, _ ->
-                save()
-                toast("Updating…")
-                val ctx = applicationContext
-                lifecycleScope.launch {
-                    val n = withContext(Dispatchers.IO) { ContentBlocker.refresh(ctx) }
-                    toast("Loaded $n blocked domains")
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null).show()
-    }
-
-    // ---- User scripts ------------------------------------------------------------------
-
-    private fun userScriptsDialog() {
-        val scripts = Store.userScripts()
-        val b = MaterialAlertDialogBuilder(this).setTitle("User scripts")
-        if (scripts.isEmpty()) b.setMessage("No scripts yet. Add one by pasting its source or a link to a .user.js file.")
-        else b.setItems(scripts.map { UserScript(it).name }.toTypedArray()) { _, i ->
-            MaterialAlertDialogBuilder(this).setMessage("Remove “${UserScript(scripts[i]).name}”?")
-                .setPositiveButton("Remove") { _, _ -> scripts.removeAt(i); Store.saveUserScripts(scripts) }
-                .setNegativeButton(android.R.string.cancel, null).show()
-        }
-        b.setPositiveButton("Add…") { _, _ -> addScriptDialog() }
-            .setNegativeButton(android.R.string.cancel, null).show()
-    }
-
-    private fun addScriptDialog() {
-        val et = EditText(this).apply {
-            hint = "Paste script source, or a https:// link"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            minLines = 6
-            setPadding(dp(20), dp(12), dp(20), dp(12))
-        }
-        MaterialAlertDialogBuilder(this).setTitle("Add user script").setView(et)
-            .setPositiveButton("Add") { _, _ ->
-                val text = et.text.toString().trim()
-                if (text.isEmpty()) return@setPositiveButton
-                lifecycleScope.launch {
-                    val src = if (text.lines().size == 1 && Patterns.WEB_URL.matcher(text).matches()) {
-                        try { withContext(Dispatchers.IO) { Net.get(AppEditor.normalizeUrl(text), 2_000_000) } }
-                        catch (e: Exception) { toast("Couldn’t download the script"); return@launch }
-                    } else text
-                    val all = Store.userScripts().also { it.add(src) }
-                    Store.saveUserScripts(all)
-                    toast("Added “${UserScript(src).name}”")
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null).show()
     }
 
     // ---- List --------------------------------------------------------------------------

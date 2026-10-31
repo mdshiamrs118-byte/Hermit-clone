@@ -30,7 +30,11 @@ data class LiteApp(
     var forceDark: Boolean = false,
     var textZoom: Int = 100,
     var feedUrl: String = "",
-    var notify: Boolean = false
+    var notify: Boolean = false,
+    var blockPopups: Boolean = true,
+    var frameless: Boolean = false,
+    var fullscreen: Boolean = false,
+    var enabledScripts: List<String> = emptyList()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id); put("name", name); put("url", url); put("color", color)
@@ -39,6 +43,8 @@ data class LiteApp(
         put("allowLocation", allowLocation); put("allowMedia", allowMedia)
         put("sandbox", sandbox); put("scopeToSite", scopeToSite); put("forceDark", forceDark)
         put("textZoom", textZoom); put("feedUrl", feedUrl); put("notify", notify)
+        put("blockPopups", blockPopups); put("frameless", frameless); put("fullscreen", fullscreen)
+        put("enabledScripts", JSONArray(enabledScripts))
     }
 
     companion object {
@@ -58,7 +64,12 @@ data class LiteApp(
             forceDark = o.optBoolean("forceDark", false),
             textZoom = o.optInt("textZoom", 100),
             feedUrl = o.optString("feedUrl", ""),
-            notify = o.optBoolean("notify", false)
+            notify = o.optBoolean("notify", false),
+            blockPopups = o.optBoolean("blockPopups", true),
+            frameless = o.optBoolean("frameless", false),
+            fullscreen = o.optBoolean("fullscreen", false),
+            enabledScripts = o.optJSONArray("enabledScripts")?.let { a -> List(a.length()) { a.getString(it) } }
+                ?: emptyList()
         )
     }
 }

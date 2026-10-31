@@ -23,8 +23,11 @@ from any other app.
 | Camera / mic / location prompts (per-app switch + Android prompt) | `WebChromeClient` in `BrowserActivity` |
 | File upload, fullscreen video, JS dialogs | `WebChromeClient` |
 | Downloads, including `blob:` URLs | `download()`, `fetchBlob()`, `BlobBridge` |
-| Reader mode, view source, print/PDF, find in page | menu in `BrowserActivity` |
-| Desktop site, text size, forced dark mode | per-app settings |
+| Quick Settings side panel (three-dot button) | `QuickPanel.kt`, host callbacks in `BrowserActivity` |
+| Reader mode, view source, print/PDF, find in page | panel tiles |
+| Content blocker, block popups, desktop mode, frameless, full-screen, dark mode toggles | panel toggle tiles |
+| Text size slider, back / forward / reload / home row | panel |
+| Per-app user scripts: built-ins (no autoplay, force text copy, force zoom, Google Translate, snow, remove footers) plus your own | `UserScripts.kt`, `GlobalSettings.kt` |
 | Feed notifications (RSS/Atom, hourly) | `FeedWorker.kt` |
 | Share target ("Open in…") | `ShareActivity.kt` |
 
@@ -61,6 +64,8 @@ still works; lite apps then share one cookie store and incognito data is wiped w
   one-time token the app just issued, but a stricter version would use `WebViewCompat.addWebMessageListener`
   with an origin allow-list.
 * "Same site" detection is a simple last-two-labels comparison, not the Public Suffix List.
+* Scripts run when a page finishes loading (not at document start), so *Disable Video AutoPlay* can
+  miss a video that starts playing immediately.
 * Not included: home-screen widgets, quick-settings tile, HTTP auth prompts, a bundled content-filter
   rule format beyond hosts lists, translations.
 * The default block list is the public StevenBlack hosts list. Change it under *Block lists…*.

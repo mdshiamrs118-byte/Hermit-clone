@@ -21,7 +21,12 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
 import android.util.Base64
-import android.view.Menu
+import android.content.DialogInterface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.ImageButton
+import androidx.core.widget.doAfterTextChanged
 import android.view.MenuItem
 import android.view.View
 import android.webkit.*
@@ -51,7 +56,7 @@ import org.json.JSONTokener
 import java.io.ByteArrayInputStream
 import java.util.UUID
 
-class BrowserActivity : AppCompatActivity() {
+class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
 
     companion object {
         const val EXTRA_APP = "app_id"
@@ -64,22 +69,6 @@ class BrowserActivity : AppCompatActivity() {
                 .putExtra(EXTRA_APP, appId)
                 .apply { if (url != null) putExtra(EXTRA_URL, url) }
 
-        private const val M_RELOAD = 1
-        private const val M_FORWARD = 2
-        private const val M_FIND = 3
-        private const val M_FIND_NEXT = 4
-        private const val M_SHARE = 5
-        private const val M_COPY = 6
-        private const val M_EXTERNAL = 7
-        private const val M_DESKTOP = 8
-        private const val M_READER = 9
-        private const val M_SOURCE = 10
-        private const val M_PRINT = 11
-        private const val M_TEXT = 12
-        private const val M_SUBSCRIBE = 13
-        private const val M_PIN = 14
-        private const val M_SETTINGS = 15
-        private const val M_CLEAR = 16
     }
 
     private lateinit var app: LiteApp
@@ -88,7 +77,6 @@ class BrowserActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var toolbar: MaterialToolbar
     private lateinit var progress: ProgressBar
-    private var scripts: List<UserScript> = emptyList()
 
     private var incognito = false
     private var profile: Profile? = null
@@ -101,8 +89,8 @@ class BrowserActivity : AppCompatActivity() {
     private var fileCb: ValueCallback<Array<Uri>>? = null
     private var permCb: ((Map<String, Boolean>) -> Unit)? = null
     private var blobToken: String? = null
-    private var findNextItem: MenuItem? = null
-    private var desktopItem: MenuItem? = null
+    private lateinit var moreBtn: ImageButton
+    private lateinit var panel: QuickPanel
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
@@ -132,7 +120,6 @@ class BrowserActivity : AppCompatActivity() {
             Store.get(id) ?: run { finish(); return }
         }
         home = Uri.parse(app.url).host.orEmpty()
-        scripts = Store.userScripts().map { UserScript(it) }
 
         val fg = app.color.onColor()
         toolbar = MaterialToolbar(this).apply {
@@ -164,6 +151,18 @@ class BrowserActivity : AppCompatActivity() {
             setBackgroundColor(app.color)
             addView(root, MATCH, MATCH)
         }
+        // Small floating button that replaces the toolbar's three dots when the toolbar is hidden.
+        moreBtn = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_more_vert)
+            setColorFilter(Color.WHITE)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x99000000.toInt()) }
+            visibility = View.GONE
+            setOnClickListener { panel.show() }
+        }
+        frame.addView(moreBtn, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.END).apply {
+            setMargins(0, dp(8), dp(8), 0)
+        })
+        panel = QuickPanel(this, this, frame)
         setContentView(frame)
         frame.applySystemBarPadding()
         WindowCompat.getInsetsController(window, frame).apply {
@@ -175,10 +174,12 @@ class BrowserActivity : AppCompatActivity() {
 
         buildMenu(fg)
         configureWebView()
+        applyChrome()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    panel.isShowing -> panel.hide()
                     customView != null -> hideCustomView()
                     web.canGoBack() -> web.goBack()
                     else -> finish()
@@ -251,8 +252,7 @@ class BrowserActivity : AppCompatActivity() {
             displayZoomControls = false
             useWideViewPort = true
             loadWithOverviewMode = true
-            setSupportMultipleWindows(false)
-            javaScriptCanOpenWindowsAutomatically = false
+            setSupportMultipleWindows(true)
             safeBrowsingEnabled = true
         }
         applySettings()
@@ -279,7 +279,7 @@ class BrowserActivity : AppCompatActivity() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, app.forceDark)
         }
-        desktopItem?.isChecked = app.desktopMode
+        s.javaScriptCanOpenWindowsAutomatically = !app.blockPopups
     }
 
     private fun client() = object : WebViewClient() {
@@ -315,7 +315,7 @@ class BrowserActivity : AppCompatActivity() {
         override fun onPageFinished(view: WebView, url: String) {
             progress.visibility = View.GONE
             toolbar.subtitle = Uri.parse(url).host
-            if (app.javascript) scripts.filter { it.appliesTo(url) }.forEach { view.evaluateJavascript(it.wrapped(), null) }
+            if (app.javascript) Scripts.forPage(app, url).forEach { view.evaluateJavascript(it, null) }
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -367,6 +367,27 @@ class BrowserActivity : AppCompatActivity() {
             catch (e: Exception) { fileCb = null; false }
         }
 
+        override fun onCreateWindow(
+            view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message
+        ): Boolean {
+            if (app.blockPopups && !isUserGesture) return false
+            // Pop-ups that the user asked for load in this same lite app window.
+            val popup = WebView(this@BrowserActivity)
+            profileName?.let {
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) WebViewCompat.setProfile(popup, it)
+            }
+            popup.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
+                    web.loadUrl(r.url.toString())
+                    v.post { v.destroy() }
+                    return true
+                }
+            }
+            (resultMsg.obj as WebView.WebViewTransport).webView = popup
+            resultMsg.sendToTarget()
+            return true
+        }
+
         override fun onShowCustomView(view: View, cb: CustomViewCallback) {
             if (customView != null) { cb.onCustomViewHidden(); return }
             customView = view; customCb = cb
@@ -399,7 +420,7 @@ class BrowserActivity : AppCompatActivity() {
         customCb?.onCustomViewHidden()
         customCb = null
         root.visibility = View.VISIBLE
-        setBars(true)
+        setBars(!app.fullscreen)
     }
 
     private fun setBars(show: Boolean) {
@@ -493,92 +514,133 @@ class BrowserActivity : AppCompatActivity() {
     // ------------------------------------------------------------------------------------
 
     private fun buildMenu(fg: Int) {
-        val m = toolbar.menu
-        m.add(0, M_RELOAD, 0, "Reload").apply {
-            setIcon(R.drawable.ic_refresh)
+        toolbar.menu.add(0, 1, 0, "Quick settings").apply {
+            setIcon(R.drawable.ic_more_vert)
             setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             icon?.mutate()?.setTint(fg)
         }
-        m.add(0, M_FORWARD, 1, "Forward")
-        m.add(0, M_FIND, 2, "Find in page")
-        findNextItem = m.add(0, M_FIND_NEXT, 3, "Find next").apply { isVisible = false }
-        m.add(0, M_SHARE, 4, "Share link")
-        m.add(0, M_COPY, 5, "Copy link")
-        m.add(0, M_EXTERNAL, 6, "Open in browser")
-        desktopItem = m.add(0, M_DESKTOP, 7, "Desktop site").apply { isCheckable = true; isChecked = app.desktopMode }
-        m.add(0, M_READER, 8, "Reader mode")
-        m.add(0, M_SOURCE, 9, "View source")
-        m.add(0, M_PRINT, 10, "Print / save as PDF")
-        m.add(0, M_TEXT, 11, "Text size…")
-        if (!incognito) {
-            m.add(0, M_SUBSCRIBE, 12, "Notify me about new posts")
-            m.add(0, M_PIN, 13, "Add to home screen")
-            m.add(0, M_SETTINGS, 14, "Settings")
-        }
-        m.add(0, M_CLEAR, 15, "Clear browsing data")
-        toolbar.setOnMenuItemClickListener { onMenu(it) }
-        toolbar.post { toolbar.overflowIcon?.setTint(fg) }
+        toolbar.setOnMenuItemClickListener { panel.show(); true }
     }
 
-    private fun onMenu(item: MenuItem): Boolean {
+    /** Toolbar vs. frameless vs. full-screen. */
+    private fun applyChrome() {
+        val bare = app.frameless || app.fullscreen
+        toolbar.visibility = if (bare) View.GONE else View.VISIBLE
+        moreBtn.visibility = if (bare) View.VISIBLE else View.GONE
+        setBars(!app.fullscreen)
+    }
+
+    private fun save() { if (!incognito) Store.upsert(app) }
+
+    // ---- QuickPanel.Host ---------------------------------------------------------------
+
+    override fun liteApp(): LiteApp = app
+    override fun isIncognito(): Boolean = incognito
+    override fun canGoBack(): Boolean = web.canGoBack()
+    override fun canGoForward(): Boolean = web.canGoForward()
+
+    override fun onTile(t: QuickPanel.Tile) {
         val url = web.url.orEmpty()
-        when (item.itemId) {
-            M_RELOAD -> web.reload()
-            M_FORWARD -> if (web.canGoForward()) web.goForward()
-            M_FIND -> findDialog()
-            M_FIND_NEXT -> web.findNext(true)
-            M_SHARE -> startActivity(Intent.createChooser(
+        when (t) {
+            QuickPanel.Tile.LITE_SETTINGS -> AppEditor.show(this, app, false) { saved ->
+                app = saved; Store.upsert(saved); applySettings(); applyChrome(); web.reload()
+            }
+            QuickPanel.Tile.GLOBAL_SETTINGS -> GlobalSettings.show(this)
+            QuickPanel.Tile.SHARE -> startActivity(Intent.createChooser(
                 Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url), null))
-            M_COPY -> {
+            QuickPanel.Tile.COPY -> {
                 (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
                     .setPrimaryClip(ClipData.newPlainText("link", url))
                 toast("Link copied")
             }
-            M_EXTERNAL -> openExternal(Uri.parse(url))
-            M_DESKTOP -> {
-                app.desktopMode = !app.desktopMode
-                if (!incognito) Store.upsert(app)
-                applySettings(); web.reload()
-            }
-            M_READER -> web.evaluateJavascript(READER_JS, null)
-            M_SOURCE -> viewSource()
-            M_PRINT -> {
+            QuickPanel.Tile.EXTERNAL -> openExternal(Uri.parse(url))
+            QuickPanel.Tile.PRINT -> {
                 val pm = getSystemService(PRINT_SERVICE) as PrintManager
                 pm.print(app.name, web.createPrintDocumentAdapter(app.name), PrintAttributes.Builder().build())
             }
-            M_TEXT -> textSizeDialog()
-            M_SUBSCRIBE -> subscribe()
-            M_PIN -> pinShortcut(this, app)
-            M_SETTINGS -> AppEditor.show(this, app, false) { saved ->
-                app = saved; Store.upsert(saved); applySettings(); web.reload()
-            }
-            M_CLEAR -> clearData()
+            QuickPanel.Tile.PIN -> pinShortcut(this, app)
+            QuickPanel.Tile.CREATE -> createFromPage()
+            QuickPanel.Tile.FIND -> findDialog()
+            QuickPanel.Tile.READER -> web.evaluateJavascript(READER_JS, null)
+            QuickPanel.Tile.SOURCE -> viewSource()
+            QuickPanel.Tile.CLEAR -> clearData()
+            QuickPanel.Tile.FEED -> subscribe()
+            QuickPanel.Tile.TRANSLATE ->
+                web.loadUrl("https://translate.google.com/translate?sl=auto&u=" + Uri.encode(url))
         }
-        return true
+    }
+
+    override fun onToggle(t: QuickPanel.Toggle, on: Boolean) {
+        when (t) {
+            QuickPanel.Toggle.BLOCKER -> { app.blockContent = on; save(); web.reload() }
+            QuickPanel.Toggle.POPUPS -> { app.blockPopups = on; save(); applySettings() }
+            QuickPanel.Toggle.DESKTOP -> { app.desktopMode = on; save(); applySettings(); web.reload() }
+            QuickPanel.Toggle.FRAMELESS -> { app.frameless = on; save(); applyChrome() }
+            QuickPanel.Toggle.FULLSCREEN -> { app.fullscreen = on; save(); applyChrome() }
+            QuickPanel.Toggle.DARK -> { app.forceDark = on; save(); applySettings() }
+        }
+    }
+
+    override fun onScript(key: String, on: Boolean) {
+        app.enabledScripts = if (on) (app.enabledScripts + key).distinct() else app.enabledScripts - key
+        save()
+        if (on) Scripts.forKey(key, web.url.orEmpty())?.let { web.evaluateJavascript(it, null) }
+        else web.reload() // a running script can't be un-run, so start the page fresh
+    }
+
+    override fun onTextZoom(percent: Int, commit: Boolean) {
+        app.textZoom = percent
+        web.settings.textZoom = percent
+        if (commit) save()
+    }
+
+    override fun onNav(n: QuickPanel.Nav) {
+        when (n) {
+            QuickPanel.Nav.HOME -> web.loadUrl(app.url)
+            QuickPanel.Nav.BACK -> if (web.canGoBack()) web.goBack()
+            QuickPanel.Nav.RELOAD -> web.reload()
+            QuickPanel.Nav.FORWARD -> if (web.canGoForward()) web.goForward()
+            QuickPanel.Nav.SETTINGS -> onTile(QuickPanel.Tile.LITE_SETTINGS)
+        }
+    }
+
+    /** "Create a Lite App": starts from the page you're looking at. */
+    private fun createFromPage() {
+        val draft = LiteApp(
+            name = web.title.orEmpty().take(30),
+            url = web.url ?: app.url,
+            color = PALETTE.random()
+        )
+        AppEditor.show(this, draft, true) { saved ->
+            Store.upsert(saved)
+            toast("Created “${saved.name}”")
+            startActivity(launchIntent(this, saved.id))
+        }
     }
 
     private fun findDialog() {
         val et = EditText(this).apply { isSingleLine = true; hint = "Find in page" }
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(et) }
-        MaterialAlertDialogBuilder(this).setTitle("Find in page").setView(box)
-            .setPositiveButton(android.R.string.search_go) { _, _ ->
-                web.clearMatches()
-                web.findAllAsync(et.text.toString())
-                findNextItem?.isVisible = true
-            }
-            .setNegativeButton(android.R.string.cancel, null).show()
-    }
-
-    private fun textSizeDialog() {
-        val sizes = intArrayOf(80, 100, 120, 150, 200)
-        val checked = sizes.indexOf(app.textZoom).coerceAtLeast(1)
-        MaterialAlertDialogBuilder(this).setTitle("Text size")
-            .setSingleChoiceItems(sizes.map { "$it%" }.toTypedArray(), checked) { d, i ->
-                app.textZoom = sizes[i]
-                if (!incognito) Store.upsert(app)
-                web.settings.textZoom = app.textZoom
-                d.dismiss()
-            }.show()
+        val d = MaterialAlertDialogBuilder(this).setView(box)
+            .setPositiveButton("Next", null)
+            .setNegativeButton("Previous", null)
+            .setNeutralButton("Done", null)
+            .setOnDismissListener { web.clearMatches() }
+            .create()
+        d.window?.apply {
+            setGravity(Gravity.BOTTOM)
+            setDimAmount(0f)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        }
+        d.setOnShowListener {
+            // Override the default click handlers so the bar stays open while you step through matches.
+            d.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener { web.findNext(true) }
+            d.getButton(DialogInterface.BUTTON_NEGATIVE).setOnClickListener { web.findNext(false) }
+            d.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { d.dismiss() }
+            et.requestFocus()
+        }
+        et.doAfterTextChanged { web.findAllAsync(it.toString()) }
+        d.show()
     }
 
     private fun viewSource() {
