@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Nutshell</string>
+    <string name="incognito">Incognito</string>
+    <string name="channel_feeds">Feed updates</string>
+</resources>
