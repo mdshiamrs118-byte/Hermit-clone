@@ -10,40 +10,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Settings that apply to every lite app: block lists and the user-script library. */
+/** Settings that apply to every lite app: sandboxes, block lists and the user-script library. */
 object GlobalSettings {
 
     fun show(act: AppCompatActivity) {
         MaterialAlertDialogBuilder(act).setTitle("Global settings")
-            .setItems(arrayOf("Block lists…", "User scripts…")) { _, i ->
-                if (i == 0) blockLists(act) else userScripts(act)
+            .setItems(arrayOf("Sandboxes", "Content Blocker", "User scripts")) { _, i ->
+                when (i) {
+                    0 -> sandboxes(act)
+                    1 -> blockLists(act)
+                    else -> userScripts(act)
+                }
             }.show()
     }
 
-    fun blockLists(act: AppCompatActivity) {
-        val et = EditText(act).apply {
-            setText(Store.blockListUrls.joinToString("\n"))
-            hint = "One list URL per line (hosts-file format)"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_VARIATION_URI
-            minLines = 3
-            setPadding(act.dp(20), act.dp(12), act.dp(20), act.dp(12))
-        }
-        fun save() {
-            Store.blockListUrls = et.text.toString().lines().map { it.trim() }.filter { it.startsWith("http") }
-        }
-        MaterialAlertDialogBuilder(act).setTitle("Block lists").setView(et)
-            .setPositiveButton("Save") { _, _ -> save() }
-            .setNeutralButton("Save & update now") { _, _ ->
-                save()
-                act.toast("Updating…")
-                val ctx = act.applicationContext
-                act.lifecycleScope.launch {
-                    val n = withContext(Dispatchers.IO) { ContentBlocker.refresh(ctx) }
-                    act.toast("Loaded $n blocked domains")
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null).show()
-    }
+    fun sandboxes(act: AppCompatActivity) = act.startActivity(SettingsActivity.intent(act, null, "sandboxes"))
+    fun blockLists(act: AppCompatActivity) = act.startActivity(SettingsActivity.intent(act, null, "blocker"))
 
     fun userScripts(act: AppCompatActivity) {
         val scripts = Store.userScripts()

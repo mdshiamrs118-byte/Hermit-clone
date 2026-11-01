@@ -2,6 +2,7 @@ package app.nutshell
 
 import android.Manifest
 import android.app.DownloadManager
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
@@ -44,6 +45,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.Profile
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebSettingsCompat
@@ -77,6 +80,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
     private lateinit var root: LinearLayout
     private lateinit var toolbar: MaterialToolbar
     private lateinit var progress: ProgressBar
+    private lateinit var swipe: SwipeRefreshLayout
 
     private var incognito = false
     private var profile: Profile? = null
@@ -115,11 +119,17 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
         incognito = id == INCOGNITO
         app = if (incognito) {
             LiteApp(id = INCOGNITO, name = getString(R.string.incognito), url = "https://duckduckgo.com/",
-                color = 0xFF424242.toInt(), scopeToSite = false)
+                color = 0xFF424242.toInt(), sandbox = Sandboxes.INCOGNITO)
         } else {
             Store.get(id) ?: run { finish(); return }
         }
         home = Uri.parse(app.url).host.orEmpty()
+        val nightMode = when (app.themeMode) {
+            "light" -> AppCompatDelegate.MODE_NIGHT_NO
+            "dark" -> AppCompatDelegate.MODE_NIGHT_YES
+            else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        }
+        if (delegate.localNightMode != nightMode) delegate.localNightMode = nightMode
 
         val fg = app.color.onColor()
         toolbar = MaterialToolbar(this).apply {
@@ -139,13 +149,18 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
         }
         web = WebView(this)
         attachProfile()
+        swipe = SwipeRefreshLayout(this).apply {
+            addView(web, MATCH, MATCH)
+            setOnRefreshListener { web.reload() }
+            setOnChildScrollUpCallback { _, _ -> web.scrollY > 0 }
+        }
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.color)
             addView(toolbar, LinearLayout.LayoutParams(MATCH, dp(56)))
             addView(progress, LinearLayout.LayoutParams(MATCH, dp(3)))
-            addView(web, LinearLayout.LayoutParams(MATCH, 0, 1f))
+            addView(swipe, LinearLayout.LayoutParams(MATCH, 0, 1f))
         }
         frame = FrameLayout(this).apply {
             setBackgroundColor(app.color)
@@ -187,7 +202,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             }
         })
 
-        web.loadUrl(intent.getStringExtra(EXTRA_URL) ?: app.url)
+        load(intent.getStringExtra(EXTRA_URL) ?: app.url)
     }
 
     /** Shows the lite app's name and color in the Recents screen. */
@@ -197,7 +212,28 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
     }
 
     override fun onPause() { if (::web.isInitialized) web.onPause(); super.onPause() }
-    override fun onResume() { super.onResume(); if (::web.isInitialized) web.onResume() }
+    override fun onResume() {
+        super.onResume()
+        if (!::web.isInitialized) return
+        web.onResume()
+        if (incognito) return
+        val fresh = Store.get(app.id)
+        if (fresh == null) { finish(); return }
+        if (fresh != app) {
+            val rebuild = fresh.sandbox != app.sandbox || fresh.themeMode != app.themeMode ||
+                fresh.color != app.color || fresh.name != app.name
+            app = fresh
+            if (rebuild) { recreate(); return }
+            applySettings()
+            applyChrome()
+            web.reload()
+        }
+    }
+
+    /** Loads a page, asking sites to send lighter content when Data Saver is on. */
+    private fun load(url: String) {
+        if (app.dataSaver) web.loadUrl(url, mapOf("Save-Data" to "on")) else web.loadUrl(url)
+    }
 
     override fun onDestroy() {
         if (!::web.isInitialized) { super.onDestroy(); return } // finished early (app was deleted)
@@ -208,7 +244,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             CookieManager.getInstance().removeAllCookies(null)
             WebStorage.getInstance().deleteAllData()
         }
-        if (incognito) profileName?.let {
+        if (profileName?.startsWith("incognito_") == true) profileName?.let {
             try { ProfileStore.getInstance().deleteProfile(it) } catch (_: Throwable) { }
         }
         super.onDestroy()
@@ -220,16 +256,14 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
 
     /** Gives each sandboxed lite app (and each incognito tab) its own cookie/storage profile. */
     private fun attachProfile() {
-        val name = when {
-            incognito -> "incognito_" + UUID.randomUUID().toString().replace("-", "").take(12)
-            app.sandbox -> "app_${app.id}"
-            else -> null
-        } ?: return
+        val temporary = incognito || app.sandbox == Sandboxes.INCOGNITO
+        val name = (if (temporary) "incognito_" + UUID.randomUUID().toString().replace("-", "").take(12)
+        else Sandboxes.profileName(app.sandbox)) ?: return
         if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
             profile = ProfileStore.getInstance().getOrCreateProfile(name)
             profileName = name
             WebViewCompat.setProfile(web, name)
-        } else if (incognito) {
+        } else if (temporary) {
             clearOnExit = true // fallback: wipe the shared store when the tab closes
             toast("Isolated profiles aren’t supported by this WebView; data is cleared on close")
         }
@@ -269,15 +303,22 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
         s.javaScriptEnabled = app.javascript
         s.setGeolocationEnabled(app.allowLocation)
         s.textZoom = app.textZoom
-        s.userAgentString = if (app.desktopMode) {
-            WebSettings.getDefaultUserAgent(this)
-                .replace(Regex("\\(Linux; Android[^)]*\\)"), "(X11; Linux x86_64)")
-                .replace(" Mobile", "")
-        } else null // null restores the default UA
+        s.userAgentString = when {
+            app.userAgent == "desktop" || (app.userAgent.isEmpty() && app.desktopMode) ->
+                WebSettings.getDefaultUserAgent(this)
+                    .replace(Regex("\\(Linux; Android[^)]*\\)"), "(X11; Linux x86_64)")
+                    .replace(" Mobile", "")
+            app.userAgent.isNotEmpty() -> app.userAgent
+            else -> null // null restores the default UA
+        }
+        s.loadsImagesAutomatically = app.loadImages
+        s.blockNetworkImage = !app.loadImages
+        s.cacheMode = if (app.dataSaver) WebSettings.LOAD_CACHE_ELSE_NETWORK else WebSettings.LOAD_DEFAULT
+        swipe.isEnabled = app.pullToRefresh
         cookies().setAcceptCookie(true)
         cookies().setAcceptThirdPartyCookies(web, !app.blockThirdPartyCookies)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, app.forceDark)
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, app.themeMode != "light")
         }
         s.javaScriptCanOpenWindowsAutomatically = !app.blockPopups
     }
@@ -296,7 +337,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             val scheme = u.scheme ?: return false
             if (scheme == "http" || scheme == "https") {
                 val host = u.host ?: return false
-                val leaving = app.scopeToSite && !incognito && request.isForMainFrame && request.hasGesture() &&
+                val leaving = !app.openLinksInApp && !incognito && request.isForMainFrame && request.hasGesture() &&
                     baseDomain(host) != baseDomain(home) && !isAuthHost(host)
                 if (leaving) { openExternal(u); return true }
                 return false
@@ -314,6 +355,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
 
         override fun onPageFinished(view: WebView, url: String) {
             progress.visibility = View.GONE
+            swipe.isRefreshing = false
             toolbar.subtitle = Uri.parse(url).host
             if (app.javascript) Scripts.forPage(app, url).forEach { view.evaluateJavascript(it, null) }
         }
@@ -340,7 +382,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap) {
             val host = Uri.parse(view.url ?: return).host ?: return
-            if (!incognito && baseDomain(host) == baseDomain(home)) IconStore.savePageIcon(this@BrowserActivity, app.id, icon)
+            if (!incognito && !app.iconCustom && baseDomain(host) == baseDomain(home)) IconStore.savePageIcon(this@BrowserActivity, app.id, icon)
         }
 
         override fun onPermissionRequest(req: PermissionRequest) {
@@ -366,6 +408,11 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
         override fun onShowFileChooser(
             v: WebView, cb: ValueCallback<Array<Uri>>, params: FileChooserParams
         ): Boolean {
+            if (!app.allowFiles) {
+                toast("Turn on “Photos, Videos, and Files” in Privacy settings to upload")
+                cb.onReceiveValue(null)
+                return true
+            }
             fileCb?.onReceiveValue(null)
             fileCb = cb
             return try { fileLauncher.launch(params.createIntent()); true }
@@ -452,6 +499,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
     }
 
     private fun handleSchemeUrl(url: String) {
+        if (!app.launchNativeApps) { toast("Opening other apps is turned off for this lite app"); return }
         try {
             val i = if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
             else Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -459,7 +507,15 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             i.component = null
             i.selector = null
             startActivity(i)
-        } catch (_: Exception) { toast("No app can open this link") }
+        } catch (_: ActivityNotFoundException) {
+            val pkg = if (url.startsWith("intent:")) {
+                try { Intent.parseUri(url, Intent.URI_INTENT_SCHEME).`package` } catch (_: Exception) { null }
+            } else null
+            if (pkg != null && app.installNativeApps) openExternal(Uri.parse("market://details?id=$pkg"))
+            else toast("No app can open this link")
+        } catch (_: Exception) {
+            toast("No app can open this link")
+        }
     }
 
     // ------------------------------------------------------------------------------------
@@ -547,9 +603,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
     override fun onTile(t: QuickPanel.Tile) {
         val url = web.url.orEmpty()
         when (t) {
-            QuickPanel.Tile.LITE_SETTINGS -> AppEditor.show(this, app, false) { saved ->
-                app = saved; Store.upsert(saved); applySettings(); applyChrome(); web.reload()
-            }
+            QuickPanel.Tile.LITE_SETTINGS -> startActivity(SettingsActivity.intent(this, app.id))
             QuickPanel.Tile.GLOBAL_SETTINGS -> GlobalSettings.show(this)
             QuickPanel.Tile.SHARE -> startActivity(Intent.createChooser(
                 Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url), null))
@@ -570,6 +624,8 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             QuickPanel.Tile.SOURCE -> viewSource()
             QuickPanel.Tile.CLEAR -> clearData()
             QuickPanel.Tile.FEED -> subscribe()
+            QuickPanel.Tile.BOOKMARKS -> bookmarksDialog()
+            QuickPanel.Tile.SEARCH -> searchDialog()
             QuickPanel.Tile.TRANSLATE ->
                 web.loadUrl("https://translate.google.com/translate?sl=auto&u=" + Uri.encode(url))
         }
@@ -582,7 +638,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             QuickPanel.Toggle.DESKTOP -> { app.desktopMode = on; save(); applySettings(); web.reload() }
             QuickPanel.Toggle.FRAMELESS -> { app.frameless = on; save(); applyChrome() }
             QuickPanel.Toggle.FULLSCREEN -> { app.fullscreen = on; save(); applyChrome() }
-            QuickPanel.Toggle.DARK -> { app.forceDark = on; save(); applySettings() }
+            QuickPanel.Toggle.DARK -> { app.themeMode = if (on) "dark" else "system"; save(); recreate() }
         }
     }
 
@@ -601,7 +657,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
 
     override fun onNav(n: QuickPanel.Nav) {
         when (n) {
-            QuickPanel.Nav.HOME -> web.loadUrl(app.url)
+            QuickPanel.Nav.HOME -> load(app.url)
             QuickPanel.Nav.BACK -> if (web.canGoBack()) web.goBack()
             QuickPanel.Nav.RELOAD -> web.reload()
             QuickPanel.Nav.FORWARD -> if (web.canGoForward()) web.goForward()
@@ -621,6 +677,32 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             toast("Created “${saved.name}”")
             startActivity(launchIntent(this, saved.id))
         }
+    }
+
+    private fun bookmarksDialog() {
+        val b = app.bookmarks
+        val d = MaterialAlertDialogBuilder(this).setTitle("Bookmarks")
+        if (b.isEmpty()) d.setMessage("No bookmarks yet.")
+        else d.setItems(b.map { it.title }.toTypedArray()) { _, i -> load(b[i].url) }
+        d.setPositiveButton("Add this page") { _, _ ->
+            Ui(this).form(listOf(
+                Ui.Field("Title", web.title.orEmpty()),
+                Ui.Field("URL", web.url.orEmpty(), uri = true, validate = ::urlError)
+            )) { v ->
+                app.bookmarks = app.bookmarks + Link(v[0], AppEditor.normalizeUrl(v[1]))
+                save()
+            }
+        }.setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private fun searchDialog() {
+        val engines = app.searches
+        fun query(e: Link) = Ui(this).prompt("Search ${e.title}", okLabel = "Search") { q ->
+            load(e.url.replace("%s", Uri.encode(q)))
+        }
+        if (engines.size == 1) query(engines[0])
+        else MaterialAlertDialogBuilder(this).setTitle("Search")
+            .setItems(engines.map { it.title }.toTypedArray()) { _, i -> query(engines[i]) }.show()
     }
 
     private fun findDialog() {
@@ -672,8 +754,7 @@ class BrowserActivity : AppCompatActivity(), QuickPanel.Host {
             if (href.isBlank()) {
                 toast("This page doesn’t advertise a feed")
             } else {
-                app.feedUrl = href
-                app.notify = true
+                app.feeds = (app.feeds + Link(web.title.orEmpty().ifEmpty { href }, href)).distinctBy { it.url }
                 Store.upsert(app)
                 toast("You’ll be notified about new posts")
                 if (Build.VERSION.SDK_INT >= 33) ask(listOf(Manifest.permission.POST_NOTIFICATIONS)) { }

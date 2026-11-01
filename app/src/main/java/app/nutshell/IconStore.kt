@@ -32,6 +32,9 @@ object IconStore {
         write(f, id, bmp)
     }
 
+    /** A user-chosen icon (picked, drawn or typed). Written immediately and never overwritten by the site's icon. */
+    fun setCustom(ctx: Context, id: String, bmp: Bitmap) = write(file(ctx, id), id, bmp)
+
     fun delete(ctx: Context, id: String) {
         file(ctx, id).delete()
         cache.remove(id)

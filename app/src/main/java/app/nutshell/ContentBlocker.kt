@@ -3,23 +3,28 @@ package app.nutshell
 import android.content.Context
 import java.io.File
 
-/** Host-based request blocker. Matches a host and all of its parent domains. */
+/** Host-based request blocker built from the enabled block lists. Matches a host and its parent domains. */
 object ContentBlocker {
     private val BUILTIN = listOf(
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "google-analytics.com",
         "googletagmanager.com", "adservice.google.com", "scorecardresearch.com", "taboola.com",
-        "outbrain.com", "adnxs.com", "criteo.com", "criteo.net", "hotjar.com", "amazon-adsystem.com",
-        "moatads.com", "quantserve.com", "rubiconproject.com", "pubmatic.com", "openx.net"
+        "outbrain.com", "adnxs.com", "criteo.com", "criteo.net", "hotjar.com", "amazon-adsystem.com"
     )
 
     @Volatile private var hosts: HashSet<String> = HashSet(BUILTIN)
 
-    private fun file(ctx: Context) = File(ctx.filesDir, "blocklist.txt")
+    fun size(): Int = hosts.size
 
+    private fun dir(ctx: Context) = File(ctx.filesDir, "blocklists").also { it.mkdirs() }
+    private fun file(ctx: Context, id: String) = File(dir(ctx), "$id.txt")
+
+    /** Rebuilds the in-memory set from the enabled lists that have been downloaded. */
     fun load(ctx: Context) {
         val s = HashSet<String>(BUILTIN)
-        val f = file(ctx)
-        if (f.exists()) f.forEachLine { if (it.isNotBlank()) s.add(it) }
+        Store.blockLists().filter { it.enabled }.forEach { l ->
+            val f = file(ctx, l.id)
+            if (f.exists()) f.forEachLine { if (it.isNotBlank()) s.add(it) }
+        }
         hosts = s
     }
 
@@ -34,22 +39,33 @@ object ContentBlocker {
         }
     }
 
-    /** Downloads every configured list; returns number of domains stored. Call off the main thread. */
-    fun refresh(ctx: Context): Int {
+    /** Downloads one list and records its host count. Call off the main thread. */
+    fun download(ctx: Context, list: BlockList): Int {
         val out = HashSet<String>()
-        for (u in Store.blockListUrls) {
-            try {
-                Net.get(u).lineSequence().forEach { line -> parse(line)?.let { out.add(it) } }
-            } catch (_: Exception) { /* keep going with the other lists */ }
-        }
-        if (out.isNotEmpty()) file(ctx).writeText(out.joinToString("\n"))
-        load(ctx)
+        Net.get(list.url).lineSequence().forEach { line -> parse(line)?.let { out.add(it) } }
+        file(ctx, list.id).writeText(out.joinToString("\n"))
+        Store.saveBlockLists(Store.blockLists().map { if (it.id == list.id) it.copy(hosts = out.size) else it })
         return out.size
     }
 
+    /** Re-downloads every enabled list, then reloads. Returns the number of blocked hosts. */
+    fun refresh(ctx: Context): Int {
+        Store.blockLists().filter { it.enabled }.forEach {
+            try { download(ctx, it) } catch (_: Exception) { /* keep going with the other lists */ }
+        }
+        Store.blockListsUpdatedAt = System.currentTimeMillis()
+        load(ctx)
+        return hosts.size
+    }
+
     fun refreshIfStale(ctx: Context) {
-        val f = file(ctx)
-        if (!f.exists() || System.currentTimeMillis() - f.lastModified() > 7 * 86_400_000L) refresh(ctx)
+        if (System.currentTimeMillis() - Store.blockListsUpdatedAt > 7 * 86_400_000L) refresh(ctx)
+    }
+
+    fun remove(ctx: Context, id: String) {
+        file(ctx, id).delete()
+        Store.saveBlockLists(Store.blockLists().filter { it.id != id })
+        load(ctx)
     }
 
     /** Understands hosts-file lines ("0.0.0.0 example.com"), bare domains, and "||example.com^" rules. */

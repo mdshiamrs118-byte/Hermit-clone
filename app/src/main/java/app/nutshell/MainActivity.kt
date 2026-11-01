@@ -213,14 +213,16 @@ class MainActivity : AppCompatActivity() {
     private fun mainMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, "New incognito tab")
-            menu.add(0, 2, 1, "Block lists…")
-            menu.add(0, 3, 2, "User scripts…")
-            menu.add(0, 4, 3, "About")
+            menu.add(0, 2, 1, "Sandboxes")
+            menu.add(0, 3, 2, "Content Blocker")
+            menu.add(0, 5, 3, "User scripts…")
+            menu.add(0, 4, 4, "About")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> startActivity(BrowserActivity.launchIntent(this@MainActivity, BrowserActivity.INCOGNITO))
-                    2 -> GlobalSettings.blockLists(this@MainActivity)
-                    3 -> GlobalSettings.userScripts(this@MainActivity)
+                    2 -> GlobalSettings.sandboxes(this@MainActivity)
+                    3 -> GlobalSettings.blockLists(this@MainActivity)
+                    5 -> GlobalSettings.userScripts(this@MainActivity)
                     4 -> MaterialAlertDialogBuilder(this@MainActivity).setTitle("Nutshell 1.0")
                         .setMessage("An independent, open source lite-apps browser. Not affiliated with or derived from Hermit or Chimbori.")
                         .setPositiveButton(android.R.string.ok, null).show()
@@ -234,9 +236,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun edit(a: LiteApp, isNew: Boolean) = AppEditor.show(this, a, isNew) { saved ->
         Store.upsert(saved)
-        if (saved.notify && Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         reload()
     }
+
+    private fun openSettings(a: LiteApp) = startActivity(SettingsActivity.intent(this, a.id))
 
     private fun open(a: LiteApp) = startActivity(BrowserActivity.launchIntent(this, a.id))
 
@@ -259,7 +262,7 @@ class MainActivity : AppCompatActivity() {
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> open(a)
-                    2 -> edit(a, false)
+                    2 -> openSettings(a)
                     3 -> pinShortcut(this@MainActivity, a)
                     4 -> confirmDelete(a)
                 }
@@ -351,7 +354,7 @@ class MainActivity : AppCompatActivity() {
             (h.dot.background as? GradientDrawable)?.setColor(a.color)
             h.row.setOnClickListener { open(a) }
             h.row.setOnLongClickListener { appMenu(h.row, a); true }
-            h.gear?.setOnClickListener { edit(a, false) }
+            h.gear?.setOnClickListener { openSettings(a) }
             h.more?.setOnClickListener { appMenu(it, a) }
         }
     }

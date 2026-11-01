@@ -45,7 +45,7 @@ class QuickPanel(
         fun onNav(n: Nav)
     }
 
-    enum class Tile { LITE_SETTINGS, GLOBAL_SETTINGS, SHARE, COPY, EXTERNAL, PRINT, PIN, CREATE, FIND, READER, SOURCE, CLEAR, FEED, TRANSLATE }
+    enum class Tile { LITE_SETTINGS, GLOBAL_SETTINGS, SHARE, COPY, EXTERNAL, PRINT, PIN, CREATE, FIND, READER, SOURCE, CLEAR, FEED, BOOKMARKS, SEARCH, TRANSLATE }
     enum class Toggle { BLOCKER, POPUPS, DESKTOP, FRAMELESS, FULLSCREEN, DARK }
     enum class Nav { HOME, BACK, RELOAD, FORWARD, SETTINGS }
 
@@ -110,6 +110,8 @@ class QuickPanel(
         if (!host.isIncognito()) actions += actionTile("Add to Home Screen", R.drawable.ic_add, Tile.PIN)
         actions += actionTile("Create a Lite App", R.drawable.ic_add, Tile.CREATE)
         actions += actionTile("Find in page", R.drawable.ic_search, Tile.FIND)
+        if (!host.isIncognito()) actions += actionTile("Bookmarks", R.drawable.ic_bookmark, Tile.BOOKMARKS)
+        if (app.searches.isNotEmpty()) actions += actionTile("Search site", R.drawable.ic_search, Tile.SEARCH)
         actions += actionTile("Reader", R.drawable.ic_menu_book, Tile.READER)
         actions += actionTile("View source", R.drawable.ic_code, Tile.SOURCE)
         actions += actionTile("Clear data", R.drawable.ic_delete, Tile.CLEAR)
@@ -158,7 +160,7 @@ class QuickPanel(
         toggles += toggleTile("Desktop Mode", R.drawable.ic_desktop, app.desktopMode, Toggle.DESKTOP)
         toggles += toggleTile("Frameless", R.drawable.ic_crop_free, app.frameless, Toggle.FRAMELESS)
         toggles += toggleTile("Full-screen", R.drawable.ic_fullscreen, app.fullscreen, Toggle.FULLSCREEN)
-        toggles += toggleTile("Dark Mode", R.drawable.ic_brightness, app.forceDark, Toggle.DARK)
+        toggles += toggleTile("Dark Mode", R.drawable.ic_brightness, app.themeMode == "dark", Toggle.DARK)
         content.addView(grid(toggles))
         content.addView(divider())
 
