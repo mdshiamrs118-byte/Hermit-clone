@@ -12,6 +12,8 @@ from any other app.
 
 | Feature | Where |
 |---|---|
+| Create button speed-dial: Create Your Own / Ready-made Lite Apps | `MainActivity.kt` |
+| Ready-made gallery: 397 sites in 53 categories, search, jump between categories, tap to add | `GalleryActivity.kt`, `Catalog.kt` |
 | Home screen: list and grid views with site icons, color dots, search / URL box | `MainActivity.kt`, `IconStore.kt` |
 | Lite App Settings screen and every sub-page (Sandbox, Behavior, Privacy, Theme, Tags, Bookmarks, Feeds, Web Monitors, Search, Share) | `SettingsActivity.kt`, `UiKit.kt` |
 | Sandboxes (22 named storage containers, clear cache / storage) | `Sandboxes.kt` |
@@ -73,6 +75,9 @@ still works; lite apps then share one cookie store and incognito data is wiped w
   miss a video that starts playing immediately.
 * Web Monitors read the page's HTML (with jsoup), so content that a page builds with JavaScript can't be watched.
 * Sandbox sizes are read from WebView's folders on disk and may show 0 on WebView versions that lay them out differently.
+* The gallery's web addresses were written from memory. A handful of obscure entries (for example App Sales, Volta, iCal Studio, Inbox Attack, Guitar Tuner) may point to the wrong place; fix any of them in Lite App Settings → URL.
+* The "FMHY" gallery sections list only legitimate sites recommended by the FMHY community directory. Streaming, torrent and cracked-software sites it also lists are deliberately left out.
+* Gallery icons are letter badges until you turn on "Show site icons", which downloads each visible site's favicon.
 * Not included: home-screen widgets, quick-settings tile, HTTP auth prompts, a bundled content-filter
   rule format beyond hosts lists, translations.
 * The default block list is the public StevenBlack hosts list. Change it under *Block lists…*.

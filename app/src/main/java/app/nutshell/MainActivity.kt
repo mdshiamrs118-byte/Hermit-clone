@@ -2,6 +2,7 @@ package app.nutshell
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -22,6 +23,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -36,6 +38,7 @@ import com.google.android.material.R as M
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,6 +51,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var empty: TextView
     private lateinit var viewToggle: ImageButton
     private var grid = false
+    private var dialOpen = false
+    private lateinit var dim: View
+    private lateinit var dialMenu: LinearLayout
+    private lateinit var dialBack: OnBackPressedCallback
     private var cText = Color.WHITE
     private var cPill = Color.DKGRAY
 
@@ -83,14 +90,46 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(32), dp(32), dp(32), dp(32))
             visibility = View.GONE
         }
+        // "Create" opens a speed-dial: make your own, or pick from the ready-made gallery.
         val fab = ExtendedFloatingActionButton(this).apply {
             text = "Create"
             setIconResource(R.drawable.ic_add)
-            setOnClickListener { edit(LiteApp(color = PALETTE.random()), true) }
+            setOnClickListener { toggleDial(!dialOpen) }
+        }
+        dim = View(this).apply {
+            setBackgroundColor(0xCC000000.toInt())
+            visibility = View.GONE
+            setOnClickListener { toggleDial(false) }
+        }
+        fun dialRow(label: String, icon: Int, click: () -> Unit) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = label; textSize = 17f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE); setPadding(0, 0, dp(16), 0)
+            })
+            addView(FloatingActionButton(this@MainActivity).apply {
+                size = FloatingActionButton.SIZE_MINI
+                setImageResource(icon)
+                setOnClickListener { toggleDial(false); click() }
+            })
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.END; bottomMargin = dp(14) }
+        }
+        dialMenu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(dialRow("Create Your Own", R.drawable.ic_edit) { edit(LiteApp(color = PALETTE.random()), true) })
+            addView(dialRow("Ready-made Lite Apps", R.drawable.ic_apps) {
+                startActivity(Intent(this@MainActivity, GalleryActivity::class.java))
+            })
         }
         val body = FrameLayout(this).apply {
             addView(list, MATCH, MATCH)
             addView(empty, MATCH, MATCH)
+            addView(dim, MATCH, MATCH)
+            addView(dialMenu, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply {
+                setMargins(dp(16), dp(16), dp(36), dp(88))
+            })
             addView(fab, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply {
                 setMargins(dp(16), dp(16), dp(16), dp(16))
             })
@@ -135,12 +174,33 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(root)
         root.applySystemBarPadding()
+        dialBack = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() = toggleDial(false)
+        }
+        onBackPressedDispatcher.addCallback(this, dialBack)
         applyLayout()
     }
 
     override fun onResume() {
         super.onResume()
+        toggleDial(false)
         reload()
+    }
+
+    private fun toggleDial(open: Boolean) {
+        dialOpen = open
+        dialBack.isEnabled = open
+        if (open) {
+            dim.alpha = 0f
+            dim.visibility = View.VISIBLE
+            dim.animate().alpha(1f).setDuration(120).start()
+            dialMenu.alpha = 0f
+            dialMenu.visibility = View.VISIBLE
+            dialMenu.animate().alpha(1f).setDuration(120).start()
+        } else {
+            dim.visibility = View.GONE
+            dialMenu.visibility = View.GONE
+        }
     }
 
     // ---- helpers -------------------------------------------------------------------------

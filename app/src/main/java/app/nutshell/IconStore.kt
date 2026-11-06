@@ -49,6 +49,42 @@ object IconStore {
         return true
     }
 
+    // ---- gallery icons (only used when the user turns on "Show site icons") -----------------
+
+    private val galleryMemory = LruCache<String, Bitmap>(200)
+    private val galleryMisses = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private fun galleryFile(ctx: Context, host: String): File {
+        val dir = File(ctx.cacheDir, "gallery_icons").also { it.mkdirs() }
+        return File(dir, host.replace(Regex("[^A-Za-z0-9.-]"), "_") + ".png")
+    }
+
+    fun galleryCached(ctx: Context, host: String): Bitmap? {
+        galleryMemory.get(host)?.let { return it }
+        val f = galleryFile(ctx, host)
+        if (!f.exists()) return null
+        return BitmapFactory.decodeFile(f.path)?.also { galleryMemory.put(host, it) }
+    }
+
+    /** Downloads the site's /favicon.ico once and caches it; returns null if the site has none. Call off the main thread. */
+    fun galleryFetch(ctx: Context, host: String): Bitmap? {
+        galleryCached(ctx, host)?.let { return it }
+        if (host in galleryMisses) return null
+        return try {
+            val bytes = Net.getBytes("https://$host/favicon.ico", 500_000)
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bmp == null) { galleryMisses.add(host); null } else {
+                val small = if (bmp.width > 128) Bitmap.createScaledBitmap(bmp, 128, (128f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true) else bmp
+                galleryFile(ctx, host).outputStream().use { small.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                galleryMemory.put(host, small)
+                small
+            }
+        } catch (_: Exception) {
+            galleryMisses.add(host)
+            null
+        }
+    }
+
     private fun write(f: File, id: String, bmp: Bitmap) {
         val small = if (bmp.width > 192) Bitmap.createScaledBitmap(bmp, 192, (192f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true) else bmp
         f.outputStream().use { small.compress(Bitmap.CompressFormat.PNG, 100, it) }

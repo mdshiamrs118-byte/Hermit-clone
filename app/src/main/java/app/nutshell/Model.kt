@@ -182,6 +182,10 @@ object Store {
         get() = sp.getBoolean("grid", false)
         set(v) { sp.edit().putBoolean("grid", v).apply() }
 
+    var galleryIcons: Boolean
+        get() = sp.getBoolean("gallery_icons", false)
+        set(v) { sp.edit().putBoolean("gallery_icons", v).apply() }
+
     // ---- tags (shared by all lite apps)
     fun tags(): List<String> {
         val s = sp.getString("tags", null) ?: return DEFAULT_TAGS
