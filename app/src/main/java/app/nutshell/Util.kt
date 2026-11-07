@@ -86,14 +86,14 @@ object Net {
     fun get(url: String, maxBytes: Int = 15_000_000): String =
         String(getBytes(url, maxBytes), Charsets.UTF_8)
 
-    fun getBytes(url: String, maxBytes: Int = 15_000_000): ByteArray {
+    fun getBytes(url: String, maxBytes: Int = 15_000_000, userAgent: String = "Nutshell/1.0", truncate: Boolean = false): ByteArray {
         val u = URL(url)
         require(u.protocol == "https" || u.protocol == "http") { "Unsupported scheme" }
         val c = u.openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 20_000
         c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", "Nutshell/1.0")
+        c.setRequestProperty("User-Agent", userAgent)
         try {
             if (c.responseCode !in 200..299) throw IOException("HTTP ${c.responseCode}")
             c.inputStream.use { ins ->
@@ -104,7 +104,10 @@ object Net {
                     val n = ins.read(buf)
                     if (n < 0) break
                     total += n
-                    if (total > maxBytes) throw IOException("Response too large")
+                    if (total > maxBytes) {
+                        if (truncate) break
+                        throw IOException("Response too large")
+                    }
                     out.write(buf, 0, n)
                 }
                 return out.toByteArray()

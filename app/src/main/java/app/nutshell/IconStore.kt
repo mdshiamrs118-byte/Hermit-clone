@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.LruCache
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
 import java.io.File
 
 /** Keeps each lite app's site icon on disk so the home screen can show it. */
@@ -40,16 +42,52 @@ object IconStore {
         cache.remove(id)
     }
 
-    /** Tries the site's /favicon.ico. Call off the main thread. */
+    private const val ICON_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+    private fun decode(bytes: ByteArray): Bitmap? =
+        try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) } catch (_: Exception) { null }
+
+    private fun declaredSize(e: Element): Int = e.attr("sizes").lowercase().substringBefore('x').toIntOrNull() ?: 0
+
+    /**
+     * Finds a site's icon the way a browser does: read the <link rel="icon"> tags in its page
+     * (home-screen "apple-touch" icons first, then the largest), and fall back to /favicon.ico.
+     * Call off the main thread.
+     */
+    fun discover(pageUrl: String): Bitmap? {
+        val host = Uri.parse(pageUrl).host ?: return null
+        val candidates = ArrayList<String>()
+        try {
+            val html = String(Net.getBytes(pageUrl, 400_000, ICON_UA, truncate = true), Charsets.UTF_8)
+            Jsoup.parse(html, pageUrl).select("link[rel][href]")
+                .filter { it.attr("rel").lowercase().contains("icon") }
+                .sortedWith(compareByDescending<Element> { it.attr("rel").lowercase().contains("apple") }
+                    .thenByDescending { declaredSize(it) })
+                .map { it.absUrl("href") }
+                .filter { it.startsWith("http") && !it.substringBefore('?').lowercase().endsWith(".svg") }
+                .let { candidates.addAll(it) }
+        } catch (_: Exception) { /* fall through to the default locations */ }
+        candidates.add("https://$host/apple-touch-icon.png")
+        candidates.add("https://$host/favicon.ico")
+        for (c in candidates.distinct().take(6)) {
+            try {
+                decode(Net.getBytes(c, 800_000, ICON_UA))?.let { if (it.width >= 16) return it }
+            } catch (_: Exception) { /* try the next one */ }
+        }
+        return null
+    }
+
+    /** Fetches and stores a lite app's icon. Call off the main thread. */
     fun fetch(ctx: Context, app: LiteApp): Boolean {
-        val host = Uri.parse(app.url).host ?: return false
-        val bytes = Net.getBytes("https://$host/favicon.ico", 1_000_000)
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return false
+        val bmp = discover(app.url) ?: return false
         write(file(ctx, app.id), app.id, bmp)
         return true
     }
 
-    // ---- gallery icons (only used when the user turns on "Show site icons") -----------------
+    /** Stores an icon the gallery already downloaded as the icon of a newly added lite app. */
+    fun adopt(ctx: Context, id: String, bmp: Bitmap) = write(file(ctx, id), id, bmp)
+
+    // ---- gallery icons (loaded as you browse the ready-made list; cached on disk) -----------
 
     private val galleryMemory = LruCache<String, Bitmap>(200)
     private val galleryMisses = java.util.Collections.synchronizedSet(HashSet<String>())
@@ -66,23 +104,16 @@ object IconStore {
         return BitmapFactory.decodeFile(f.path)?.also { galleryMemory.put(host, it) }
     }
 
-    /** Downloads the site's /favicon.ico once and caches it; returns null if the site has none. Call off the main thread. */
-    fun galleryFetch(ctx: Context, host: String): Bitmap? {
+    /** Finds and caches a site's icon once; returns null if it has none. Call off the main thread. */
+    fun galleryFetch(ctx: Context, host: String, pageUrl: String): Bitmap? {
         galleryCached(ctx, host)?.let { return it }
         if (host in galleryMisses) return null
-        return try {
-            val bytes = Net.getBytes("https://$host/favicon.ico", 500_000)
-            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            if (bmp == null) { galleryMisses.add(host); null } else {
-                val small = if (bmp.width > 128) Bitmap.createScaledBitmap(bmp, 128, (128f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true) else bmp
-                galleryFile(ctx, host).outputStream().use { small.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                galleryMemory.put(host, small)
-                small
-            }
-        } catch (_: Exception) {
-            galleryMisses.add(host)
-            null
-        }
+        val bmp = try { discover(pageUrl) } catch (_: Exception) { null }
+        if (bmp == null) { galleryMisses.add(host); return null }
+        val small = if (bmp.width > 128) Bitmap.createScaledBitmap(bmp, 128, (128f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true) else bmp
+        try { galleryFile(ctx, host).outputStream().use { small.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (_: Exception) { }
+        galleryMemory.put(host, small)
+        return small
     }
 
     private fun write(f: File, id: String, bmp: Bitmap) {

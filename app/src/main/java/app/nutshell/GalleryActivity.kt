@@ -178,8 +178,10 @@ class GalleryActivity : AppCompatActivity() {
         toast("Added “${app.name}”")
         list.adapter?.notifyDataSetChanged()
         val ctx = applicationContext
-        lifecycleScope.launch(Dispatchers.IO) {
-            try { if (!IconStore.has(ctx, lite.id)) IconStore.fetch(ctx, lite) } catch (_: Exception) { }
+        val cached = Uri.parse(app.url).host?.let { IconStore.galleryCached(ctx, it) }
+        if (cached != null) IconStore.adopt(ctx, lite.id, cached)
+        else lifecycleScope.launch(Dispatchers.IO) {
+            try { IconStore.fetch(ctx, lite) } catch (_: Exception) { }
         }
     }
 
@@ -188,7 +190,7 @@ class GalleryActivity : AppCompatActivity() {
         val ctx = applicationContext
         IconStore.galleryCached(ctx, host)?.let { iv.setImageBitmap(it); return }
         lifecycleScope.launch {
-            val bmp = gate.withPermit { withContext(Dispatchers.IO) { IconStore.galleryFetch(ctx, host) } }
+            val bmp = gate.withPermit { withContext(Dispatchers.IO) { IconStore.galleryFetch(ctx, host, app.url) } }
             if (bmp != null && iv.tag == app.url) iv.setImageBitmap(bmp)
         }
     }
@@ -254,7 +256,7 @@ class GalleryActivity : AppCompatActivity() {
                     val cells = List(COLUMNS) { buildCell(ctx).also { c -> row.addView(c.root, LinearLayout.LayoutParams(0, WRAP, 1f)) } }
                     RowVH(row, cells)
                 }
-                SWITCH -> SimpleVH(ui.switchRow(R.drawable.ic_image, "Show site icons", showIcons) { on ->
+                SWITCH -> SimpleVH(ui.switchRow(R.drawable.ic_image, "Load site icons", showIcons) { on ->
                     showIcons = on
                     Store.galleryIcons = on
                     list.adapter?.notifyDataSetChanged()

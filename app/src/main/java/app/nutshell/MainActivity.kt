@@ -411,7 +411,20 @@ class MainActivity : AppCompatActivity() {
             h.icon.setImageBitmap(IconStore.load(ctx, a.id) ?: letterIcon(a.name, a.color))
             h.name.text = a.name
             h.url?.text = a.url
-            (h.dot.background as? GradientDrawable)?.setColor(a.color)
+            when (a.sandbox) {
+                Sandboxes.DEFAULT -> h.dot.visibility = View.GONE
+                Sandboxes.INCOGNITO -> {
+                    h.dot.visibility = View.VISIBLE
+                    h.dot.background = tint(R.drawable.ic_incognito)
+                }
+                else -> {
+                    h.dot.visibility = View.VISIBLE
+                    h.dot.background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Sandboxes.get(a.sandbox).color)
+                    }
+                }
+            }
             h.row.setOnClickListener { open(a) }
             h.row.setOnLongClickListener { appMenu(h.row, a); true }
             h.gear?.setOnClickListener { openSettings(a) }

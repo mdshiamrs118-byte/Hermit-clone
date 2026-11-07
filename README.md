@@ -77,7 +77,7 @@ still works; lite apps then share one cookie store and incognito data is wiped w
 * Sandbox sizes are read from WebView's folders on disk and may show 0 on WebView versions that lay them out differently.
 * The gallery's web addresses were written from memory. A handful of obscure entries (for example App Sales, Volta, iCal Studio, Inbox Attack, Guitar Tuner) may point to the wrong place; fix any of them in Lite App Settings → URL.
 * The "FMHY" gallery sections list only legitimate sites recommended by the FMHY community directory. Streaming, torrent and cracked-software sites it also lists are deliberately left out.
-* Gallery icons are letter badges until you turn on "Show site icons", which downloads each visible site's favicon.
+* Gallery icons load as you scroll (each site's own icon is read from its page and cached). Turn this off with the "Load site icons" switch at the top of the gallery if you would rather not contact the sites.
 * Not included: home-screen widgets, quick-settings tile, HTTP auth prompts, a bundled content-filter
   rule format beyond hosts lists, translations.
 * The default block list is the public StevenBlack hosts list. Change it under *Block lists…*.
